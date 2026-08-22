@@ -19,9 +19,10 @@ const BASE_COLORS = [
 
 const MAX_HEALTH = 100;
 const HIT_DAMAGE = 34; // 3 hits to explode
-const HIT_RANGE = 0.07; // normalized distance a hit can reach
 const HIT_COOLDOWN_MS = 350;
 const RESPAWN_MS = 10000;
+const LASER_WIDTH = 0.035; // perpendicular tolerance (normalized coords) for a laser to "hit"
+const LASER_RANGE = 1.5; // how far a laser travels (normalized units, can exceed 1 for full screen)
 
 const usedColors = new Map(); // socketId -> color
 const players = new Map(); // socketId -> { x, y, color, id, name, health, dead, lastHitAt }
@@ -89,23 +90,57 @@ io.on('connection', (socket) => {
     socket.broadcast.emit('player-moved', { id: socket.id, x: p.x, y: p.y });
   });
 
-  socket.on('hit', ({ targetId }) => {
+  socket.on('laser', ({ dx, dy }) => {
     const attacker = players.get(socket.id);
-    const target = players.get(targetId);
-    if (!attacker || !target || attacker.dead || target.dead) return;
-    if (attacker.id === target.id) return;
+    if (!attacker || attacker.dead) return;
+    if (typeof dx !== 'number' || typeof dy !== 'number') return;
+
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 0.0001) return;
+    const ndx = dx / len;
+    const ndy = dy / len;
 
     const now = Date.now();
     if (now - attacker.lastHitAt < HIT_COOLDOWN_MS) return;
-
-    const dx = attacker.x - target.x;
-    const dy = attacker.y - target.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist > HIT_RANGE) return;
-
     attacker.lastHitAt = now;
-    target.health = Math.max(0, target.health - HIT_DAMAGE);
 
+    // Find the closest living player whose position falls near the laser's ray
+    let closestTarget = null;
+    let closestT = Infinity;
+
+    for (const p of players.values()) {
+      if (p.id === attacker.id || p.dead) continue;
+      const px = p.x - attacker.x;
+      const py = p.y - attacker.y;
+      const t = px * ndx + py * ndy; // projection along the ray
+      if (t <= 0 || t > LASER_RANGE) continue; // behind shooter or out of range
+
+      const perpX = px - ndx * t;
+      const perpY = py - ndy * t;
+      const perpDist = Math.sqrt(perpX * perpX + perpY * perpY);
+      if (perpDist <= LASER_WIDTH && t < closestT) {
+        closestT = t;
+        closestTarget = p;
+      }
+    }
+
+    const endX = attacker.x + ndx * LASER_RANGE;
+    const endY = attacker.y + ndy * LASER_RANGE;
+
+    io.emit('laser-fired', {
+      id: attacker.id,
+      fromX: attacker.x,
+      fromY: attacker.y,
+      toX: closestTarget ? attacker.x + ndx * closestT : endX,
+      toY: closestTarget ? attacker.y + ndy * closestT : endY,
+      color: attacker.color,
+      hitId: closestTarget ? closestTarget.id : null
+    });
+
+    if (!closestTarget) return;
+
+    const target = closestTarget;
+    target.health = Math.max(0, target.health - HIT_DAMAGE);
     io.emit('player-hit', { id: target.id, health: target.health, by: attacker.id });
 
     if (target.health <= 0) {

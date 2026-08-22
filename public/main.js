@@ -43,6 +43,7 @@ const RESPAWN_MS = 10000;
 const cats = new Map();
 let myId = null;
 const explosions = []; // { x, y, t0, color }
+const lasers = []; // { fromX, fromY, toX, toY, color, t0, hitId }
 
 const socket = io();
 
@@ -123,6 +124,16 @@ socket.on('player-left', ({ id }) => {
   updateCount();
 });
 
+socket.on('laser-fired', ({ id, fromX, fromY, toX, toY, color, hitId }) => {
+  lasers.push({
+    fromX: fromX * width, fromY: fromY * height,
+    toX: toX * width, toY: toY * height,
+    color,
+    t0: performance.now(),
+    hitId
+  });
+});
+
 function updateCount() {
   onlineCountEl.textContent = cats.size;
 }
@@ -160,27 +171,17 @@ window.addEventListener('touchmove', (e) => {
   }
 }, { passive: true });
 
-// ---------- Click-to-hit ----------
-const HIT_PICK_RADIUS = 36; // pixels
-
+// ---------- Click-to-fire laser (shoots toward where you clicked) ----------
 function handleAttack(clientX, clientY) {
-  let closestId = null;
-  let closestDist = Infinity;
+  const me = myId ? cats.get(myId) : null;
+  if (!me || me.dead) return;
 
-  for (const [id, c] of cats) {
-    if (id === myId || c.dead) continue;
-    const px = c.x * width;
-    const py = c.y * height;
-    const d = Math.hypot(px - clientX, py - clientY);
-    if (d < HIT_PICK_RADIUS && d < closestDist) {
-      closestDist = d;
-      closestId = id;
-    }
-  }
+  const dx = (clientX / width) - me.x;
+  const dy = (clientY / height) - me.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 0.001) return;
 
-  if (closestId) {
-    socket.emit('hit', { targetId: closestId });
-  }
+  socket.emit('laser', { dx: dx / len, dy: dy / len });
 }
 
 canvas.addEventListener('click', (e) => {
@@ -228,6 +229,51 @@ function drawExplosions(now) {
     ctx.globalAlpha = 0.5 * (1 - progress);
     ctx.fill();
     ctx.globalAlpha = 1;
+  }
+}
+
+// ---------- Laser beams ----------
+const LASER_LIFETIME = 0.18; // seconds the beam stays visible
+
+function drawLasers(now) {
+  for (let i = lasers.length - 1; i >= 0; i--) {
+    const l = lasers[i];
+    const age = (now - l.t0) / 1000;
+    if (age > LASER_LIFETIME) {
+      lasers.splice(i, 1);
+      continue;
+    }
+    const fade = 1 - age / LASER_LIFETIME;
+
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.strokeStyle = l.color;
+    ctx.lineWidth = 3;
+    ctx.shadowColor = l.color;
+    ctx.shadowBlur = 14;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(l.fromX, l.fromY);
+    ctx.lineTo(l.toX, l.toY);
+    ctx.stroke();
+
+    // bright core
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.2;
+    ctx.globalAlpha = fade * 0.9;
+    ctx.stroke();
+    ctx.restore();
+
+    // impact spark
+    if (l.hitId) {
+      ctx.save();
+      ctx.globalAlpha = fade;
+      ctx.beginPath();
+      ctx.arc(l.toX, l.toY, 6 * fade + 2, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.restore();
+    }
   }
 }
 
@@ -318,6 +364,7 @@ function animate(now) {
     drawLabel(c, px, py);
   }
 
+  drawLasers(now);
   drawExplosions(now);
 
   requestAnimationFrame(animate);
