@@ -17,14 +17,19 @@ const BASE_COLORS = [
   '#da77f2', '#f783ac', '#e64980', '#20c997', '#fab005'
 ];
 
+const MAX_HEALTH = 100;
+const HIT_DAMAGE = 34; // 3 hits to explode
+const HIT_RANGE = 0.07; // normalized distance a hit can reach
+const HIT_COOLDOWN_MS = 350;
+const RESPAWN_MS = 10000;
+
 const usedColors = new Map(); // socketId -> color
-const players = new Map(); // socketId -> { x, y, color, name }
+const players = new Map(); // socketId -> { x, y, color, id, name, health, dead, lastHitAt }
 
 function pickColor(socketId) {
   const taken = new Set(usedColors.values());
   let color = BASE_COLORS.find(c => !taken.has(c));
   if (!color) {
-    // Procedurally generate a color if we run out of the base palette
     const hue = Math.floor(Math.random() * 360);
     color = `hsl(${hue}, 70%, 60%)`;
   }
@@ -32,30 +37,92 @@ function pickColor(socketId) {
   return color;
 }
 
+function randomSpawn() {
+  return {
+    x: 0.5 + (Math.random() - 0.5) * 0.3,
+    y: 0.5 + (Math.random() - 0.5) * 0.3
+  };
+}
+
+function sanitizeName(raw) {
+  if (typeof raw !== 'string') return 'Cat';
+  const trimmed = raw.trim().slice(0, 16);
+  return trimmed.length ? trimmed : 'Cat';
+}
+
 io.on('connection', (socket) => {
   const color = pickColor(socket.id);
-  const startX = 0.5 + (Math.random() - 0.5) * 0.3;
-  const startY = 0.5 + (Math.random() - 0.5) * 0.3;
+  const spawn = randomSpawn();
 
-  players.set(socket.id, { x: startX, y: startY, color, id: socket.id });
+  players.set(socket.id, {
+    id: socket.id,
+    x: spawn.x,
+    y: spawn.y,
+    color,
+    name: 'Cat',
+    health: MAX_HEALTH,
+    dead: false,
+    lastHitAt: 0
+  });
 
-  // Tell the new player who they are and who's already here
   socket.emit('init', {
     id: socket.id,
     color,
     players: Array.from(players.values())
   });
 
-  // Tell everyone else about the new cat
   socket.broadcast.emit('player-joined', players.get(socket.id));
+
+  socket.on('set-name', (name) => {
+    const p = players.get(socket.id);
+    if (!p) return;
+    p.name = sanitizeName(name);
+    io.emit('player-renamed', { id: socket.id, name: p.name });
+  });
 
   socket.on('move', (pos) => {
     const p = players.get(socket.id);
-    if (!p) return;
+    if (!p || p.dead) return;
     if (typeof pos.x !== 'number' || typeof pos.y !== 'number') return;
     p.x = Math.max(0, Math.min(1, pos.x));
     p.y = Math.max(0, Math.min(1, pos.y));
     socket.broadcast.emit('player-moved', { id: socket.id, x: p.x, y: p.y });
+  });
+
+  socket.on('hit', ({ targetId }) => {
+    const attacker = players.get(socket.id);
+    const target = players.get(targetId);
+    if (!attacker || !target || attacker.dead || target.dead) return;
+    if (attacker.id === target.id) return;
+
+    const now = Date.now();
+    if (now - attacker.lastHitAt < HIT_COOLDOWN_MS) return;
+
+    const dx = attacker.x - target.x;
+    const dy = attacker.y - target.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > HIT_RANGE) return;
+
+    attacker.lastHitAt = now;
+    target.health = Math.max(0, target.health - HIT_DAMAGE);
+
+    io.emit('player-hit', { id: target.id, health: target.health, by: attacker.id });
+
+    if (target.health <= 0) {
+      target.dead = true;
+      io.emit('player-exploded', { id: target.id });
+
+      setTimeout(() => {
+        const p = players.get(target.id);
+        if (!p) return; // disconnected while dead
+        const respawn = randomSpawn();
+        p.x = respawn.x;
+        p.y = respawn.y;
+        p.health = MAX_HEALTH;
+        p.dead = false;
+        io.emit('player-respawned', { id: p.id, x: p.x, y: p.y, health: p.health });
+      }, RESPAWN_MS);
+    }
   });
 
   socket.on('disconnect', () => {

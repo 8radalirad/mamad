@@ -10,7 +10,17 @@
   <div id="hud">
     <div id="title">🐱 Flying Cats in Space</div>
     <div id="count">Cats online: <span id="online-count">1</span></div>
+    <div id="hint">Click a cat to hit it 💥 — 3 hits and it explodes, respawns in 10s</div>
   </div>
+
+  <div id="name-overlay">
+    <div id="name-box">
+      <div id="name-title">🐱 What's your cat's name?</div>
+      <input id="name-input" maxlength="16" placeholder="Enter a name..." autocomplete="off" />
+      <button id="name-submit">Start Flying</button>
+    </div>
+  </div>
+
   <canvas id="scene"></canvas>
 
   <script src="/socket.io/socket.io.js"></script>
