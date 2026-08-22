@@ -1,0 +1,43 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: radial-gradient(ellipse at bottom, #0b0e2b 0%, #000010 100%);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  cursor: crosshair;
+}
+
+canvas#scene {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+#hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 10;
+  color: #fff;
+  text-shadow: 0 0 8px rgba(0,0,0,0.6);
+  pointer-events: none;
+  user-select: none;
+}
+
+#title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+#count {
+  margin-top: 4px;
+  font-size: 13px;
+  opacity: 0.8;
+}
